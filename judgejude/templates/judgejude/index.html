@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Judge Jude</title>
+    <!-- Load static files -->
+    {% load static %}
+    <!-- Import Materialize CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" rel="stylesheet">
+    <!-- Import Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <!-- Link to Custom CSS -->
+    <link href="{% static 'css/styles.css' %}" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h3 class="center-align">Judge Jude</h3>
+        <div class="row center-align">
+            <button id="recordButton" class="btn waves-effect waves-light">
+                <i class="material-icons left">mic</i>Record
+            </button>
+            <button id="stopButton" class="btn waves-effect waves-light" disabled>
+                <i class="material-icons left">stop</i>Stop
+            </button>
+        </div>
+        <div class="row">
+            <div class="input-field col s12">
+                <textarea id="transcription" class="materialize-textarea" rows="50" cols="50"></textarea>
+                <label for="transcription">Transcription</label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Materialize JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    <script>
+        let stream = null;
+        let recording = false;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const transcriptionArea = document.getElementById('transcription');
+
+        function validateAudioBlob(audioBlob) {
+            return new Promise((resolve, reject) => {
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+
+                audio.oncanplaythrough = () => {
+                    resolve(true);
+                };
+
+                audio.onerror = () => {
+                    reject('Invalid audio data');
+                };
+
+                audio.load();
+            });
+        }
+
+        function startRecording() {
+            mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'audio/webm;codecs=opus'
+            });
+
+            mediaRecorder.addEventListener('dataavailable', async event => {
+                audioChunks.push(event.data);
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                console.log('Audio chunk received:', event.data);
+                console.log('Blob size:', audioBlob.size);
+
+                try {
+                    const isValid = await validateAudioBlob(audioBlob);
+
+                    if (isValid) {
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob);
+
+                        console.log('Sending audio blob with size:', audioBlob.size);
+
+                        fetch('/transcribe/', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.transcription) {
+                                transcriptionArea.value += data.transcription + '\n';
+                            } else {
+                                console.log('Received undefined transcription, skipping');
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error during transcription:', error);
+                        });
+
+                        audioChunks = [];
+                    } else {
+                        console.error('Invalid audio data, skipping chunk');
+                    }
+                } catch (error) {
+                    console.error('Error validating audio blob:', error);
+                }
+            });
+
+            mediaRecorder.start(); // Start recording
+
+            setTimeout(() => {
+                if (recording) {
+                    mediaRecorder.stop();
+                    startRecording(); // Start a new recording session
+                }
+            }, 10000); // Stop recording after 10 seconds
+        }
+
+        function stopRecording() {
+            recording = false;
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            recordButton.disabled = false;
+            stopButton.disabled = true;
+        }
+
+        recordButton.addEventListener('click', () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(mediaStream => {
+                    stream = mediaStream;
+                    recording = true;
+                    startRecording();
+
+                    recordButton.disabled = true;
+                    stopButton.disabled = false;
+                })
+                .catch(error => {
+                    console.error('Error accessing media devices:', error);
+                });
+        });
+
+        stopButton.addEventListener('click', () => {
+            stopRecording();
+        });
+    </script>
+</body>
+</html>
